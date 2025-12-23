@@ -113,13 +113,34 @@
     /* accessible focus */
     .map-toggle:focus { outline: 2px solid rgba(0,210,255,0.12); }
 
+    /* ===========================
+       HIDE TEXT ON LEAFLET.MEASURE BUTTON (keep toggle + accessible labels)
+       =========================== */
+    .leaflet-control-measure .leaflet-control-measure-toggle a {
+      width: 36px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+      box-sizing: border-box;
+      text-indent: -9999px;   /* sembunyikan teks */
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    /* Optional icon styling (uncomment if you want a fontawesome icon) */
+//  content: "\f545"; /* coba code icon; bisa disesuaikan */
+//  font-weight: 900;
+//  font-size: 14px;
+//  color: #fff;
+//}
     </style>
 </head>
 <body>
 <div id="dashboard-wrapper" class="">
     <aside id="sidebar" aria-label="Sidebar">
         <div class="sidebar-header">
-            <h4>SURAKARTA WEBGIS EVAN</h4>
+            <h4>WEBGIS CLOCKBOARD ZONE SURAKARTA EVAN</h4>
             <div class="d-flex align-items-center mt-2">
                 <span class="badge bg-primary me-2" style="font-size: 0.6rem;">EVAN DASHBOARD</span>
                 <p class="small text-muted mb-0" style="font-size: 0.7rem; color: rgba(255,255,255,0.6);">Clockboard Analysis 2025</p>
@@ -148,9 +169,9 @@
 
                 <div>
                     <div style="font-size:0.78rem; color: var(--text-muted); margin-bottom:6px;">Analisis Data</div>
-                    <label class="layer-item"><input type="checkbox" id="overlay-batas-admin" checked> Batas Administrasi</label>
                     <label class="layer-item"><input type="checkbox" id="overlay-clockboard" checked> Clockboard Zone</label>
                     <label class="layer-item"><input type="checkbox" id="overlay-mce"> MCE Surakarta</label>
+                    <label class="layer-item"><input type="checkbox" id="overlay-batas-admin"> Batas Administrasi</label>
                 </div>
             </div>
 
@@ -206,7 +227,6 @@
 /* ========================
    --- BEGIN qgis2web code (dipertahankan) ---
    ======================== */
-// (salin semua fungsi dan definisi layer Anda di sini seperti sebelumnya)
 var highlightLayer;
 function highlightFeature(e) {
     highlightLayer = e.target;
@@ -319,7 +339,7 @@ function pop_AnalisisClockboardZoneSurakarta_4(feature, layer) {
         if (typeof layer.closePopup == 'function') layer.closePopup(); else layer.eachLayer(function(feature){ feature.closePopup(); });
     }, mouseover: highlightFeature });
     var popupContent = '<table>\
-            <tr><td class="visible-with-data" id="zone_id" colspan="2"><strong>zone_id</strong><br />' + (feature.properties['zone_id'] !== null ? autolinker.link(String(feature.properties['zone_id']).replace(/'/g, '\'').toLocaleString()) : '') + '</td></tr>\
+            <tr><td class="visible-with-data" id="zone_id" colspan="2"><strong>Zona Clockboard</strong><br />' + (feature.properties['zone_id'] !== null ? autolinker.link(String(feature.properties['zone_id']).replace(/'/g, '\'').toLocaleString()) : '') + '</td></tr>\
             <tr><td colspan="2">' + (feature.properties['zone_sum'] !== null ? autolinker.link(String(feature.properties['zone_sum']).replace(/'/g, '\'').toLocaleString()) : '') + '</td></tr>\
             <tr><td colspan="2">' + (feature.properties['zone_mean'] !== null ? autolinker.link(String(feature.properties['zone_mean']).replace(/'/g, '\'').toLocaleString()) : '') + '</td></tr>\
             <tr><td class="visible-with-data" id="Source" colspan="2"><strong>Source</strong><br />' + (feature.properties['Source'] !== null ? autolinker.link(String(feature.properties['Source']).replace(/'/g, '\'').toLocaleString()) : '') + '</td></tr>\
@@ -342,7 +362,6 @@ var layer_AnalisisClockboardZoneSurakarta_4 = new L.geoJson(json_AnalisisClockbo
     pane:'pane_AnalisisClockboardZoneSurakarta_4', onEachFeature: pop_AnalisisClockboardZoneSurakarta_4, style: style_AnalisisClockboardZoneSurakarta_4_0
 });
 bounds_group.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
-map.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
 
 function pop_BatasAdminSurakarta_5(feature, layer) {
     layer.on({ mouseout: function(e) {
@@ -425,8 +444,39 @@ L.control.zoom({ position: 'topright' }).addTo(map);
 L.control.locate({ position: 'topright' }).addTo(map);
 new L.Control.Measure({ position: 'topright', primaryLengthUnit: 'meters' }).addTo(map);
 
+/* ========================
+   --- CLEANUP MEASURE BUTTON TEXT (keep functionality & accessibility)
+   ======================== */
+setTimeout(function(){
+    // plugin biasanya membuat .leaflet-control-measure .leaflet-control-measure-toggle a
+    var btn = document.querySelector('.leaflet-control-measure .leaflet-control-measure-toggle a');
+    if (!btn) {
+        // fallback: coba selector lain
+        btn = document.querySelector('.leaflet-control-measure a');
+    }
+    if (btn) {
+        // kosongkan teks visual (CSS sudah memindahkan teks dengan text-indent)
+        btn.textContent = '';
+        // tetap sediakan tooltip dan label untuk aksesibilitas
+        btn.setAttribute('title', 'Measure');
+        btn.setAttribute('aria-label', 'Measure');
+        // jika ingin menampilkan icon via pseudo-element, tambahkan kelas dan sesuaikan CSS
+        btn.classList.add('compact-control');
+    }
+}, 80);
+
+/* ========================
+   --- INITIAL LAYER STATE: only Google Satellite + Clockboard Zone
+   ======================== */
+// Pastikan hanya basemap Google dan layer Clockboard ditambahkan saat startup.
+// Remove terlebih dahulu agar tidak ada sisa, lalu tambahkan dua layer yang diinginkan.
+try { map.removeLayer(layer_GoogleSatellite_0); } catch (e) {}
+try { map.removeLayer(layer_OpenStreetMap_1); } catch (e) {}
+try { map.removeLayer(layer_DarkMatterretina_2); } catch (e) {}
+try { map.removeLayer(layer_BatasAdminSurakarta_5); } catch (e) {}
+try { map.removeLayer(layer_MultiCriteriaEvaluationSurakarta_3); } catch (e) {}
+
 map.addLayer(layer_GoogleSatellite_0);
-map.addLayer(layer_BatasAdminSurakarta_5);
 map.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
 
 /* ========================
@@ -444,9 +494,7 @@ map.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
 
     // helper untuk memanggil invalidateSize setelah animasi
     function refreshMapAfterTransition() {
-        // call invalidateSize after transition ensures leaflet canvas reflow
         if (window.map && typeof window.map.invalidateSize === 'function') {
-            // small delay to ensure CSS finished
             setTimeout(function(){ map.invalidateSize(); }, 220);
         }
     }
@@ -455,12 +503,9 @@ map.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
     function setSidebar(open) {
         if (open) wrapper.classList.add('sidebar-open'); else wrapper.classList.remove('sidebar-open');
         localStorage.setItem('sidebar-open', !!open);
-        // animate icon change
         if (open) { toggleIcon.classList.remove('fa-bars'); toggleIcon.classList.add('fa-times'); }
         else { toggleIcon.classList.remove('fa-times'); toggleIcon.classList.add('fa-bars'); }
 
-        // try to refresh after transition ends; also attach transitionend as fallback
-        // but do not attach too many listeners
         var called = false;
         function onTransitionEnd(e) {
             if (e && e.target !== sidebar) return;
@@ -470,7 +515,6 @@ map.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
             refreshMapAfterTransition();
         }
         sidebar.addEventListener('transitionend', onTransitionEnd);
-        // fallback
         setTimeout(function(){ if (!called) refreshMapAfterTransition(); }, 400);
     }
 
