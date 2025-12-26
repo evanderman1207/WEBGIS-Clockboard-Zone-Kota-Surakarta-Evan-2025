@@ -241,7 +241,7 @@ function highlightFeature(e) {
 var map = L.map('map', { zoomControl: false, maxZoom: 28, minZoom: 1 })
     .fitBounds([[-7.597069084198594,110.76663390539312],[-7.520191120726702,110.87154808329655]]);
 var hash = new L.Hash(map);
-map.attributionControl.setPrefix('<a href="https://github.com/tomchadwin/qgis2web" target="_blank">qgis2web</a> &middot; <a href="https://leafletjs.com">Leaflet</a> &middot; <a href="https://qgis.org">QGIS</a>');
+map.attributionControl.setPrefix('<a href="https://www.linkedin.com/in/evan-derman/" target="_blank">LinkedIn Evan</a> &middot; <a href="https://leafletjs.com">Leaflet</a> &middot; <a href="https://sites.google.com/view/portfolioevanderman/home">Evan</a>');
 var autolinker = new Autolinker({truncate: {length: 30, location: 'smart'}});
 
 function removeEmptyRowsFromPopupContent(content, feature) {
@@ -582,7 +582,657 @@ map.addLayer(layer_AnalisisClockboardZoneSurakarta_4);
 
     // initial refresh
     setTimeout(function(){ map.invalidateSize(); }, 400);
+    
 })();
+
+// --- START NEW FEATURE: PRINT & DOWNLOAD ---
+// Additive module: Preview modal + "Download/Print" control and non-destructive export workflow.
+// NOTE: This script is standalone and does NOT modify or remove any lines from the original script.
+// It assumes a global Leaflet `map` variable exists (same assumption used by the original feature).
+(function(){
+    // small helper to dynamically load scripts (independent from the original IIFE)
+    function loadScriptOnce(src) {
+        return new Promise(function(resolve, reject){
+            if (document.querySelector('script[src="'+src+'"]')) return resolve();
+            var s = document.createElement('script');
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = function(){ reject(new Error('Failed to load ' + src)); };
+            document.head.appendChild(s);
+        });
+    }
+
+    // ensure html2canvas and jspdf available when needed
+    async function ensureExportLibs() {
+        try {
+            if (!window.html2canvas) {
+                await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+            }
+            if (!window.jspdf) {
+                await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+            }
+            return true;
+        } catch (e) {
+            console.error(e);
+            alert('Gagal memuat library ekspor (html2canvas / jsPDF). Periksa koneksi internet Anda.');
+            return false;
+        }
+    }
+
+    // create "Download/Print" button next to existing print button without removing existing elements
+    function createDownloadControl() {
+        if (document.getElementById('print-download-control')) return;
+        var btn = document.createElement('button');
+        btn.id = 'print-download-control';
+        btn.title = 'Preview & Download map';
+        btn.setAttribute('aria-label','Preview and download map');
+        btn.style.position = 'absolute';
+        // try to place adjacent to existing print-button; fallback to top-left
+        var ref = document.getElementById('print-button') || document.getElementById('dashboard-wrapper') || document.body;
+        // compute position near existing print-button if possible
+        if (document.getElementById('print-button')) {
+            // keep it slightly to the right of existing print-button
+            btn.style.bottom = '20px'; // Jarak dari bawah
+btn.style.right = '20px';  // Jarak dari kanan
+btn.style.zIndex = '1000'; // Memastikan tombol berada di atas layer peta
+        } else {
+            btn.style.bottom = '20px'; // Jarak dari bawah
+btn.style.right = '20px';  // Jarak dari kanan
+btn.style.zIndex = '1000'; // Memastikan tombol berada di atas layer peta
+        }
+        btn.style.borderRadius = '10px';
+        btn.style.background = 'rgba(6,120,255,0.9)';
+        btn.style.color = '#fff';
+        btn.style.border = 'none';
+        btn.style.padding = '8px 10px';
+        btn.style.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
+        btn.style.cursor = 'pointer';
+        btn.innerHTML = '<span style="font-weight:600;font-size:13px;">Preview & Download</span>';
+        // try to append near wrapper if available to avoid overlaying other controls
+        var wrapper = document.getElementById('dashboard-wrapper') || document.body;
+        wrapper.appendChild(btn);
+
+        btn.addEventListener('click', async function(){
+            // ensure libs loaded
+            var ok = await ensureExportLibs();
+            if (!ok) return;
+            openPreviewModal();
+        });
+    }
+
+    // utility to clone legend (best-effort)
+    function cloneLegend() {
+        // attempt common selectors for legend controls
+        var selectors = [
+            '.leaflet-control .legend',
+            '.legend',
+            '.map-legend',
+            '.legend-control',
+            '.map-legend-wrapper'
+        ];
+        for (var i=0;i<selectors.length;i++){
+            var el = document.querySelector(selectors[i]);
+            if (el) {
+                var cl = el.cloneNode(true);
+                cl.style.position = 'absolute';
+                cl.style.right = '12px';
+                cl.style.top = '12px';
+                cl.style.zIndex = 9999;
+                cl.style.background = 'rgba(255,255,255,0.95)';
+                cl.style.padding = '8px';
+                cl.style.borderRadius = '6px';
+                cl.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
+                return cl;
+            }
+        }
+        return null;
+    }
+
+    // compute scale bar similar to original (best-effort using global map)
+    function computeScaleInfo(map, pxWidth) {
+        try {
+            var size = map.getSize();
+            var p1 = L.point(0, size.y / 2);
+            var p2 = L.point(pxWidth, size.y / 2);
+            var latlng1 = map.containerPointToLatLng(p1);
+            var latlng2 = map.containerPointToLatLng(p2);
+            var meters = map.distance(latlng1, latlng2);
+            // choose nice round value
+            var scales = [1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000];
+            var nice = scales[scales.length-1];
+            for (var i=0;i<scales.length;i++){
+                if (scales[i] >= meters) { nice = scales[i]; break; }
+            }
+            var ratio = nice / meters;
+            var pixelLen = Math.round(pxWidth * ratio);
+            var label = (nice >= 1000) ? (nice/1000) + ' km' : (Math.round(nice) + ' m');
+            return { pixelLen: pixelLen, label: label };
+        } catch (e) {
+            return { pixelLen: 100, label: '---' };
+        }
+    }
+
+    // Build printable clone element for preview (independent copy; does NOT alter original map)
+    function buildPreviewElement(titleText) {
+        var previewWrapper = document.createElement('div');
+        previewWrapper.style.width = '1100px';
+        previewWrapper.style.height = '850px';
+        previewWrapper.style.background = '#fff';
+        previewWrapper.style.position = 'relative';
+        previewWrapper.style.overflow = 'hidden';
+        previewWrapper.style.display = 'flex';
+        previewWrapper.style.flexDirection = 'column';
+        previewWrapper.style.boxSizing = 'border-box';
+        previewWrapper.style.border = '1px solid #ddd';
+        previewWrapper.style.borderRadius = '6px';
+
+        // header area for title + meta
+        var header = document.createElement('div');
+        header.style.padding = '12px 14px';
+        header.style.borderBottom = '1px solid #eee';
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.background = '#fafafa';
+        var title = document.createElement('div');
+        title.style.fontWeight = '700';
+        title.style.fontSize = '16px';
+        title.innerText = titleText || document.title || 'Map';
+        title.contentEditable = true;
+        title.id = 'preview-map-title';
+        var meta = document.createElement('div');
+        meta.style.fontSize = '12px';
+        meta.style.color = '#333';
+        var now = new Date();
+        meta.innerText = now.toLocaleString();
+        header.appendChild(title);
+        header.appendChild(meta);
+        previewWrapper.appendChild(header);
+
+        // main map area
+        var mapArea = document.createElement('div');
+        mapArea.style.position = 'relative';
+        mapArea.style.flex = '1';
+        mapArea.style.background = '#fff';
+        mapArea.style.display = 'block';
+        mapArea.style.overflow = 'hidden';
+        previewWrapper.appendChild(mapArea);
+
+        // Try to clone map DOM (best-effort)
+        if (window.map && typeof map.getContainer === 'function') {
+            try {
+                var orig = map.getContainer();
+                var clone = orig.cloneNode(true);
+                // remove interactive controls which should not be in printable area (best-effort)
+                Array.from(clone.querySelectorAll('.leaflet-control-zoom, .leaflet-control-locate, .leaflet-control-measure, .leaflet-control-scale')).forEach(function(n){ n.remove(); });
+                // clear pointer-events on cloned map to avoid interactions in preview
+                clone.style.pointerEvents = 'none';
+                clone.style.width = '100%';
+                clone.style.height = '100%';
+                mapArea.appendChild(clone);
+
+                // add scale bar
+                var sc = document.createElement('div');
+                sc.style.position = 'absolute';
+                sc.style.left = '12px';
+                sc.style.bottom = '12px';
+                sc.style.background = 'rgba(255,255,255,0.95)';
+                sc.style.padding = '6px 8px';
+                sc.style.borderRadius = '4px';
+                sc.style.fontSize = '12px';
+                sc.style.boxShadow = '0 2px 6px rgba(0,0,0,0.12)';
+                var info = computeScaleInfo(map, 100);
+                sc.innerHTML = '<div style="height:6px;background:#222;width:'+info.pixelLen+'px;border-radius:2px;margin-bottom:6px;"></div><div style="text-align:left;">'+info.label+'</div>';
+                mapArea.appendChild(sc);
+
+                // add north arrow
+                var north = document.createElement('div');
+                north.style.position = 'absolute';
+                north.style.right = '12px';
+                north.style.bottom = '12px';
+                north.style.width = '56px';
+                north.style.height = '56px';
+                north.style.display = 'flex';
+                north.style.alignItems = 'center';
+                north.style.justifyContent = 'center';
+                north.style.background = 'rgba(255,255,255,0.95)';
+                north.style.borderRadius = '6px';
+                north.style.boxShadow = '0 2px 6px rgba(0,0,0,0.12)';
+                north.innerHTML = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="34" height="34"><g fill="none" stroke="#111" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L20 20 L12 16 L4 20 Z" fill="#eee"/></g></svg><div style="position:absolute;bottom:-14px;right:-2px;font-size:10px;color:#333;">N</div>';
+                mapArea.appendChild(north);
+
+                // permanent credit text inside map area
+                var mapCredit = document.createElement('div');
+                mapCredit.style.position = 'absolute';
+                mapCredit.style.left = '12px';
+                mapCredit.style.bottom = '4px';
+                mapCredit.style.fontSize = '10px';
+                mapCredit.style.color = '#333';
+                mapCredit.style.background = 'rgba(255,255,255,0.0)';
+                mapCredit.style.padding = '2px 4px';
+                mapCredit.style.pointerEvents = 'none';
+                mapCredit.innerText = '[Isi Nama Credit/Instansi Anda]';
+                mapArea.appendChild(mapCredit);
+
+                // clone legend if available
+                var legendClone = cloneLegend();
+                if (legendClone) {
+                    legendClone.id = 'preview-legend';
+                    // ensure high z-index so html2canvas captures it prominently
+                    legendClone.style.zIndex = 9998;
+                    mapArea.appendChild(legendClone);
+                }
+
+            } catch (e) {
+                console.warn('Failed to clone map DOM for preview', e);
+                // fallback: show a placeholder
+                var placeholder = document.createElement('div');
+                placeholder.style.width = '100%';
+                placeholder.style.height = '100%';
+                placeholder.style.display = 'flex';
+                placeholder.style.alignItems = 'center';
+                placeholder.style.justifyContent = 'center';
+                placeholder.style.color = '#666';
+                placeholder.innerText = 'Preview tidak tersedia (kloning peta gagal).';
+                mapArea.appendChild(placeholder);
+            }
+        } else {
+            var noMap = document.createElement('div');
+            noMap.style.width = '100%';
+            noMap.style.height = '100%';
+            noMap.style.display = 'flex';
+            noMap.style.alignItems = 'center';
+            noMap.style.justifyContent = 'center';
+            noMap.style.color = '#666';
+            noMap.innerText = 'Map object tidak ditemukan pada halaman.';
+            mapArea.appendChild(noMap);
+        }
+
+        // footer area (permanent credit and actions are added in modal separately)
+        var footer = document.createElement('div');
+        footer.style.padding = '10px 14px';
+        footer.style.borderTop = '1px solid #eee';
+        footer.style.display = 'flex';
+        footer.style.justifyContent = 'space-between';
+        footer.style.alignItems = 'center';
+        footer.style.background = '#fafafa';
+        var credit = document.createElement('div');
+        credit.style.fontWeight = '600';
+        credit.innerText = '[Isi Nama Credit/Instansi Anda]';
+        footer.appendChild(credit);
+        previewWrapper.appendChild(footer);
+
+        return previewWrapper;
+    }
+
+    // show preview modal, render canvas using html2canvas and display preview image + actions
+    async function openPreviewModal() {
+        // create modal elements
+        if (document.getElementById('map-export-preview-modal')) return; // single instance
+        var modal = document.createElement('div');
+        modal.id = 'map-export-preview-modal';
+        modal.style.position = 'fixed';
+        modal.style.left = '0';
+        modal.style.top = '0';
+        modal.style.width = '100vw';
+        modal.style.height = '100vh';
+        modal.style.background = 'rgba(0,0,0,0.6)';
+        modal.style.zIndex = 3200;
+        modal.style.display = 'flex';
+        modal.style.alignItems = 'center';
+        modal.style.justifyContent = 'center';
+        modal.style.padding = '20px';
+        // content container
+        var content = document.createElement('div');
+        content.style.width = 'min(1200px,98vw)';
+        content.style.height = 'min(920px,95vh)';
+        content.style.background = '#fff';
+        content.style.borderRadius = '8px';
+        content.style.overflow = 'hidden';
+        content.style.display = 'flex';
+        content.style.flexDirection = 'column';
+        content.style.boxShadow = '0 12px 40px rgba(0,0,0,0.5)';
+        modal.appendChild(content);
+
+        // top bar with title editable
+        var topBar = document.createElement('div');
+        topBar.style.padding = '10px 14px';
+        topBar.style.display = 'flex';
+        topBar.style.justifyContent = 'space-between';
+        topBar.style.alignItems = 'center';
+        var tLeft = document.createElement('div');
+        tLeft.style.fontSize = '15px';
+        tLeft.style.fontWeight = '700';
+        tLeft.innerText = 'Preview Export';
+        var tRight = document.createElement('div');
+        tRight.style.display = 'flex';
+        tRight.style.alignItems = 'center';
+        tRight.style.gap = '8px';
+        var btnClose = document.createElement('button');
+        btnClose.innerText = 'Close';
+        btnClose.style.border = 'none';
+        btnClose.style.background = 'transparent';
+        btnClose.style.cursor = 'pointer';
+        btnClose.style.fontSize = '13px';
+        btnClose.style.color = '#1b1b1b';
+        btnClose.addEventListener('click', function(){ modal.remove(); });
+        tRight.appendChild(btnClose);
+        topBar.appendChild(tLeft);
+        topBar.appendChild(tRight);
+        content.appendChild(topBar);
+
+        // main area where preview and options appear
+        var mainArea = document.createElement('div');
+        mainArea.style.flex = '1';
+        mainArea.style.display = 'flex';
+        mainArea.style.gap = '12px';
+        mainArea.style.padding = '12px';
+        mainArea.style.boxSizing = 'border-box';
+        content.appendChild(mainArea);
+
+        // left: preview container (with scroll)
+        var previewContainer = document.createElement('div');
+        previewContainer.style.flex = '1';
+        previewContainer.style.overflow = 'auto';
+        previewContainer.style.display = 'flex';
+        previewContainer.style.alignItems = 'center';
+        previewContainer.style.justifyContent = 'center';
+        previewContainer.style.background = '#f6f6f6';
+        previewContainer.style.padding = '12px';
+        mainArea.appendChild(previewContainer);
+
+        // right: actions and metadata
+        var actionPanel = document.createElement('div');
+        actionPanel.style.width = '320px';
+        actionPanel.style.display = 'flex';
+        actionPanel.style.flexDirection = 'column';
+        actionPanel.style.gap = '10px';
+        actionPanel.style.borderLeft = '1px solid #eee';
+        actionPanel.style.paddingLeft = '12px';
+        actionPanel.style.boxSizing = 'border-box';
+        mainArea.appendChild(actionPanel);
+
+        // metadata / editable title
+        var label = document.createElement('div');
+        label.style.fontSize = '13px';
+        label.style.fontWeight = '600';
+        label.innerText = 'Title (click to edit preview title):';
+        var titleInput = document.createElement('div');
+        titleInput.contentEditable = true;
+        titleInput.style.minHeight = '34px';
+        titleInput.style.padding = '8px';
+        titleInput.style.border = '1px solid #e6e6e6';
+        titleInput.style.borderRadius = '6px';
+        titleInput.style.background = '#fff';
+        titleInput.innerText = document.title || 'Map';
+        actionPanel.appendChild(label);
+        actionPanel.appendChild(titleInput);
+
+        // legend / attributes info area (read-only)
+        var attLabel = document.createElement('div');
+        attLabel.style.fontSize = '13px';
+        attLabel.style.fontWeight = '600';
+        attLabel.innerText = 'Atribut Peta / Legend (ditangkap otomatis jika tersedia):';
+        var attBox = document.createElement('div');
+        attBox.style.minHeight = '120px';
+        attBox.style.padding = '8px';
+        attBox.style.border = '1px solid #e6e6e6';
+        attBox.style.borderRadius = '6px';
+        attBox.style.background = '#fff';
+        attBox.style.overflow = 'auto';
+        actionPanel.appendChild(attLabel);
+        actionPanel.appendChild(attBox);
+
+        // action buttons
+        var btns = document.createElement('div');
+        btns.style.display = 'flex';
+        btns.style.flexDirection = 'column';
+        btns.style.gap = '8px';
+        btns.style.marginTop = '6px';
+        var btnDownloadPNG = document.createElement('button');
+        btnDownloadPNG.innerText = 'Download PNG';
+        btnDownloadPNG.style.padding = '10px';
+        btnDownloadPNG.style.border = 'none';
+        btnDownloadPNG.style.borderRadius = '6px';
+        btnDownloadPNG.style.background = '#0b84ff';
+        btnDownloadPNG.style.color = '#fff';
+        btnDownloadPNG.style.cursor = 'pointer';
+        var btnDownloadPDF = document.createElement('button');
+        btnDownloadPDF.innerText = 'Download PDF';
+        btnDownloadPDF.style.padding = '10px';
+        btnDownloadPDF.style.border = '1px solid #0b84ff';
+        btnDownloadPDF.style.borderRadius = '6px';
+        btnDownloadPDF.style.background = '#fff';
+        btnDownloadPDF.style.color = '#0b84ff';
+        btnDownloadPDF.style.cursor = 'pointer';
+        var btnRegenerate = document.createElement('button');
+        btnRegenerate.innerText = 'Regenerate Preview';
+        btnRegenerate.style.padding = '10px';
+        btnRegenerate.style.border = '1px solid #888';
+        btnRegenerate.style.borderRadius = '6px';
+        btnRegenerate.style.background = '#fff';
+        btnRegenerate.style.color = '#111';
+        btnRegenerate.style.cursor = 'pointer';
+        btns.appendChild(btnDownloadPNG);
+        btns.appendChild(btnDownloadPDF);
+        btns.appendChild(btnRegenerate);
+        actionPanel.appendChild(btns);
+
+        // small note about credit permanence
+        var note = document.createElement('div');
+        note.style.fontSize = '12px';
+        note.style.color = '#444';
+        note.style.marginTop = '6px';
+        note.innerText = 'Catatan: Credit/Watermark akan selalu ditambahkan di pojok bawah hasil download.';
+        actionPanel.appendChild(note);
+
+        document.body.appendChild(modal);
+
+        // Build initial preview element (heavy operation)
+        var previewElement = buildPreviewElement(titleInput.innerText);
+        previewContainer.appendChild(previewElement);
+
+        // fill legend / attributes box with cloned legend HTML (if exists)
+        var legendClone = document.getElementById('preview-legend') || cloneLegend();
+        if (legendClone) {
+            // convert to simple HTML for display on panel
+            attBox.appendChild(legendClone.cloneNode(true));
+        } else {
+            attBox.innerText = 'Legend tidak ditemukan otomatis pada halaman. Jika legend ada di DOM, pastikan class/selector terlihat oleh skrip.';
+        }
+
+        // helper to render current previewElement into an image using html2canvas
+        async function renderPreviewToCanvas() {
+            try {
+                // temporarily scale previewElement for better resolution capture
+                var opts = {
+                    useCORS: true,
+                    allowTaint: false,
+                    backgroundColor: '#ffffff',
+                    scale: 2,
+                    logging: false
+                };
+                // ensure elements (tiles) have a moment to render
+                await new Promise(r => setTimeout(r, 300));
+                var canvas = await html2canvas(previewElement, opts);
+                return canvas;
+            } catch (e) {
+                console.error('Render preview failed', e);
+                throw e;
+            }
+        }
+
+        // Render initially
+        var currentCanvas = null;
+        async function generateAndShowPreview() {
+            try {
+                // update title inside preview element (editable header)
+                var previewTitleEl = previewElement.querySelector('#preview-map-title');
+                if (previewTitleEl) previewTitleEl.innerText = titleInput.innerText || document.title || 'Map';
+                // also update meta timestamp
+                var meta = previewElement.querySelector('.print-meta') || null;
+                if (meta) meta.innerText = new Date().toLocaleString();
+
+                // render
+                var canvas = await renderPreviewToCanvas();
+                currentCanvas = canvas;
+                // show image in preview container (replace previous)
+                // create an <img> element for nicer fit
+                var img = document.createElement('img');
+                img.src = canvas.toDataURL('image/png');
+                img.style.maxWidth = '100%';
+                img.style.height = 'auto';
+                img.style.border = '1px solid #ddd';
+                img.style.borderRadius = '6px';
+                // remove existing image or canvas children
+                previewContainer.innerHTML = '';
+                var wrap = document.createElement('div');
+                wrap.style.display = 'flex';
+                wrap.style.alignItems = 'center';
+                wrap.style.justifyContent = 'center';
+                wrap.appendChild(img);
+                previewContainer.appendChild(wrap);
+            } catch (e) {
+                previewContainer.innerHTML = '';
+                var errDiv = document.createElement('div');
+                errDiv.style.color = '#b00';
+                errDiv.style.padding = '12px';
+                errDiv.innerText = 'Gagal membuat preview. Kemungkinan masalah CORS pada tile peta atau sumber tile tidak mengizinkan capture.';
+                previewContainer.appendChild(errDiv);
+            }
+        }
+
+        // do initial generate
+        await generateAndShowPreview();
+
+        // wire buttons
+        btnRegenerate.addEventListener('click', async function(){
+            // rebuild previewElement (fresh) to reflect any changed title / legend / map)
+            previewElement.remove();
+            previewElement = buildPreviewElement(titleInput.innerText);
+            previewContainer.innerHTML = '';
+            previewContainer.appendChild(previewElement);
+            // re-add legend/attributes if available
+            var lclone = document.getElementById('preview-legend') || cloneLegend();
+            if (lclone) {
+                attBox.innerHTML = '';
+                attBox.appendChild(lclone.cloneNode(true));
+            }
+            await generateAndShowPreview();
+        });
+
+        btnDownloadPNG.addEventListener('click', async function(){
+            try {
+                if (!currentCanvas) {
+                    currentCanvas = await renderPreviewToCanvas();
+                }
+                // ensure the permanent credit is present (draw into canvas as well so tile CORS issues aside, we still overlay text)
+                var ctx = currentCanvas.getContext('2d');
+                var credit = '[Isi Nama Credit/Instansi Anda]';
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = 'rgba(20,20,20,0.85)';
+                // draw a semi-opaque stripe behind the text for high contrast
+                var textWidth = ctx.measureText(credit).width;
+                var padding = 8;
+                var x = 12;
+                var y = currentCanvas.height - 12;
+                ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                ctx.fillRect(x - padding/2, y - 16 - padding/2, textWidth + padding, 22 + padding);
+                ctx.fillStyle = 'rgba(20,20,20,0.95)';
+                ctx.fillText(credit, x, y);
+                // trigger download
+                var link = document.createElement('a');
+                link.href = currentCanvas.toDataURL('image/png');
+                var safeTitle = (titleInput.innerText || 'map').replace(/[<>:"\/\\|?*\x00-\x1F]/g,'').trim() || 'map';
+                link.download = safeTitle + '.png';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            } catch (e) {
+                console.error(e);
+                alert('Download PNG gagal. Periksa console untuk detail.');
+            }
+        });
+
+        btnDownloadPDF.addEventListener('click', async function(){
+            try {
+                // ensure jsPDF is present under window.jspdf (UMD)
+                if (!window.jspdf || !window.jspdf.jsPDF) {
+                    await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+                }
+                if (!currentCanvas) {
+                    currentCanvas = await renderPreviewToCanvas();
+                }
+                // create jsPDF instance sized to canvas
+                var { jsPDF } = window.jspdf;
+                var imgData = currentCanvas.toDataURL('image/png');
+                var orientation = currentCanvas.width > currentCanvas.height ? 'landscape' : 'portrait';
+                // using px unit to map canvas pixel dimension directly
+                var pdf = new jsPDF({
+                    orientation: orientation,
+                    unit: 'px',
+                    format: [currentCanvas.width, currentCanvas.height]
+                });
+                pdf.addImage(imgData, 'PNG', 0, 0, currentCanvas.width, currentCanvas.height, undefined, 'FAST');
+
+                // add permanent credit text also as text (in case)
+                var footerText = '[Isi Nama Credit/Instansi Anda]';
+                pdf.setFontSize(10);
+                pdf.setTextColor(40,40,40);
+                pdf.text(footerText, 12, currentCanvas.height - 8);
+
+                // add title on top-left if user set it
+                var finalTitle = titleInput.innerText || document.title || 'map';
+                pdf.setFontSize(14);
+                pdf.setTextColor(10,10,10);
+                pdf.text(finalTitle, 14, 20);
+
+                var safeTitle = finalTitle.replace(/[<>:"\/\\|?*\x00-\x1F]/g,'').trim() || 'map';
+                pdf.save(safeTitle + '.pdf');
+            } catch (e) {
+                console.error(e);
+                alert('Download PDF gagal. Periksa console untuk detail.');
+            }
+        });
+
+        // close modal on Escape
+        function escHandler(e){
+            if (e.key === 'Escape') modal.remove();
+        }
+        window.addEventListener('keydown', escHandler);
+        modal.addEventListener('remove', function(){ window.removeEventListener('keydown', escHandler); });
+
+        // cleanup when modal removed (observer)
+        var observer = new MutationObserver(function(records){
+            records.forEach(function(rec){
+                rec.removedNodes.forEach(function(node){
+                    if (node === modal) {
+                        window.removeEventListener('keydown', escHandler);
+                        observer.disconnect();
+                    }
+                });
+            });
+        });
+        observer.observe(document.body, { childList: true });
+    }
+
+    // Initialize control on DOMContentLoaded
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', createDownloadControl);
+    } else {
+        createDownloadControl();
+    }
+
+    // expose a small API on window for advanced usage (non-invasive)
+    window._mapExportPreview = {
+        open: openPreviewModal,
+        createControl: createDownloadControl,
+        ensureLibs: ensureExportLibs
+    };
+
+})(); 
+// --- END NEW FEATURE ---
+
 </script>
 </body>
 </html>
